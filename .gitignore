@@ -5,3 +5,7 @@
 # Secrets — any .env variant; examples are placeholders and tracked.
 .env*
 !.env*.example
+
+# Build output; the signing key lives in ~/.config/rathi-tv/.
+out/
+*.jks
