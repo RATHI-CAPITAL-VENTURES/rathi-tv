@@ -122,6 +122,9 @@ public class MainActivity extends Activity {
     private static Typeface regular, semibold;
 
     private FrameLayout root; // the page, inside a vertical scroller
+    private Shelf shelf;       // rathi-tv: the focused app's art behind the page
+    private int lastKey;       // rathi-tv: the last D-pad key, so a tile leans the way focus came from
+    private long lastKeyAt;    // rathi-tv: when (uptime ms): only a fresh key makes a tile lean
     private int tileW, tileH, gridTop; // app grid geometry, set by buildTiles
     private final List<View> tiles = new ArrayList<>();
     private boolean dirty = true;
@@ -194,7 +197,12 @@ public class MainActivity extends Activity {
         moveHint.setVisibility(View.GONE);
         root.addView(moveHint, at(px(MARGIN), px(ROW1_TOP - 64), -2, -2));
 
-        setContentView(scroller);
+        // rathi-tv: the shelf sits between the window's wallpaper and the page.
+        shelf = new Shelf(this);
+        FrameLayout page = new FrameLayout(this);
+        page.addView(shelf.view(), new FrameLayout.LayoutParams(-1, -1));
+        page.addView(scroller, new FrameLayout.LayoutParams(-1, -1));
+        setContentView(page);
 
         IntentFilter f = new IntentFilter();
         f.addAction(Intent.ACTION_PACKAGE_ADDED);
@@ -213,6 +221,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        shelf.release(); // rathi-tv
         unregisterReceiver(packagesChanged);
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm != null) try { cm.unregisterNetworkCallback(networkChanged); } catch (Exception ignored) {}
@@ -311,6 +320,18 @@ public class MainActivity extends Activity {
         if (!java.util.Locale.getDefault().equals(shownLocale)) recreate();
     }
 
+    // rathi-tv: remember the direction of travel for the tiles' lean.
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent e) {
+        if (e.getAction() == KeyEvent.ACTION_DOWN) {
+            lastKey = e.getKeyCode();
+            // Dispatch time, not press time: a key that waited behind a busy main thread
+            // still counts as fresh for the focus move it causes.
+            lastKeyAt = android.os.SystemClock.uptimeMillis();
+        }
+        return super.dispatchKeyEvent(e);
+    }
+
     @Override
     public void onBackPressed() { /* home screen: nothing to go back to */ }
 
@@ -382,6 +403,7 @@ public class MainActivity extends Activity {
         }
         tiles.clear();
         rowApps.clear();
+        shelf.forget();
         movingKey = null;
         moveHint.setVisibility(View.GONE);
 
@@ -463,6 +485,7 @@ public class MainActivity extends Activity {
         FrameLayout card = new FrameLayout(this);
         final GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(px(RADIUS));
+        if (banner != null) shelf.prepare(key, banner); // rathi-tv: the shelf's art, worked out once
         if (banner != null) {
             bg.setColor(0xFF1E1A1C);
             ImageView iv = new ImageView(this);
@@ -491,6 +514,16 @@ public class MainActivity extends Activity {
             inner.addView(t, lp);
             card.addView(inner, new FrameLayout.LayoutParams(-1, -1));
         }
+        // rathi-tv: a streak of light that sweeps across a tile as it takes focus.
+        final View shine = new View(this);
+        shine.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[] {0x00FFFFFF, 0x38FFFFFF, 0x00FFFFFF}));
+        shine.setRotation(18);
+        shine.setAlpha(0f);
+        FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(w / 3, h * 2);
+        sp.topMargin = -h / 2;
+        card.addView(shine, sp);
+        card.setCameraDistance(8000 * getResources().getDisplayMetrics().density);
         card.setBackground(bg);
         card.setClipToOutline(true);
         card.setFocusable(true);
@@ -505,11 +538,33 @@ public class MainActivity extends Activity {
         }
 
         final boolean glass = banner == null;
+        final boolean hasArt = banner != null;
         card.setOnFocusChangeListener((v, has) -> {
             if (has) focusedKey = key;
             if (glass) bg.setColor(has ? 0x38FFFFFF : 0x13FFFFFF);
-            v.animate().scaleX(has ? 1.1f : 1f).scaleY(has ? 1.1f : 1f).translationZ(has ? px(26) : 0)
-                    .setDuration(140).withLayer().start();
+            // rathi-tv: the shelf follows focus; a tile leans in from the side focus came
+            // from and settles, and the shine sweeps across it once.
+            if (has) {
+                if (hasArt) shelf.show(key); else shelf.clear();
+                int k = Tilt.keyFor(lastKey, android.os.SystemClock.uptimeMillis() - lastKeyAt);
+                v.setRotationY(Tilt.yFor(k));
+                v.setRotationX(Tilt.xFor(k));
+                shine.setTranslationX(-w / 2f);
+                shine.setAlpha(1f);
+                shine.animate().translationX(w * 1.2f).setStartDelay(90).setDuration(620)
+                        .withEndAction(() -> shine.setAlpha(0f)).start();
+            } else {
+                shine.animate().cancel();
+                shine.setAlpha(0f);
+            }
+            android.view.ViewPropertyAnimator a = v.animate().scaleX(has ? 1.1f : 1f).scaleY(has ? 1.1f : 1f)
+                    .translationZ(has ? px(26) : 0).rotationX(0).rotationY(0)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f))
+                    .setDuration(has ? 300 : 140);
+            // No hardware layer while gaining focus: the shine moves inside the card then,
+            // and a layer would be redrawn every frame for nothing.
+            if (!has) a.withLayer();
+            a.start();
             if (caption != null) caption.setVisibility(has ? View.VISIBLE : View.INVISIBLE);
         });
         final boolean editable = rowApps.contains(key);
@@ -572,6 +627,7 @@ public class MainActivity extends Activity {
         card.setContentDescription(label);
         card.setOnFocusChangeListener((v, has) -> {
             if (has) focusedKey = key;
+            if (has) shelf.clear(); // rathi-tv: the clock-row icons show the wallpaper, like glass tiles
             bg.setColor(has ? 0x38FFFFFF : Color.TRANSPARENT);
             v.animate().scaleX(has ? 1.1f : 1f).scaleY(has ? 1.1f : 1f).setDuration(140).withLayer().start();
         });
