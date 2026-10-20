@@ -55,6 +55,8 @@ final class Gallery {
   private int generation;
   private boolean running;
   private boolean hasPicture;
+  private boolean dimmed;
+  private ObjectAnimator fade;
 
   Gallery(Context context, float scale) {
     this.context = context;
@@ -111,9 +113,14 @@ final class Gallery {
 
   /** The page shows all apps: the car steps back (and the card with it). */
   void setDimmed(boolean dimmed) {
-    dim.animate().alpha(dimmed ? 0.82f : 0f).setDuration(300).start();
-    card.animate().alpha(dimmed || !hasPicture ? 0f : 1f).setDuration(300).start();
+    this.dimmed = dimmed;
+    dim.animate().alpha(dimmed ? 0.82f : 0f).setDuration(200).start();
+    card.animate().alpha(cardTarget()).setDuration(200).start();
   }
+
+  // The card shows only over a car, and not on the all-apps page. Every card animation
+  // aims here, so one cancelling another can't leave it in the wrong state.
+  private float cardTarget() { return !dimmed && hasPicture ? 1f : 0f; }
 
   /** Home is in front: show a car now if none is up, then change every IDLE_MS. */
   void resume() {
@@ -135,6 +142,23 @@ final class Gallery {
     if (worker != null) worker.quitSafely();
     worker = null;
     io = null;
+  }
+
+  /**
+   * An app is in front and may need the memory: drop the car pictures (8 MB each).
+   * The next resume decodes a car again (~60 ms) and fades it in. The TV runs with
+   * ~250 MB free and swap full while Plex alone holds 330 MB (measured 2026-10-20).
+   */
+  void trim() {
+    if (fade != null) fade.cancel();
+    card.animate().cancel();
+    for (ImageView v : art) {
+      v.animate().cancel();
+      v.setAlpha(0f);
+      v.setImageDrawable(null);
+    }
+    hasPicture = false;
+    card.setAlpha(0f);
   }
 
   void release() {
@@ -170,10 +194,12 @@ final class Gallery {
     in.bringToFront();
     shade.bringToFront();   // the new picture would otherwise cover the shade
     dim.bringToFront();
-    ObjectAnimator fade = ObjectAnimator.ofFloat(in, View.ALPHA, 0f, 1f);
+    if (fade != null) fade.cancel();
+    fade = ObjectAnimator.ofFloat(in, View.ALPHA, 0f, 1f);
     fade.setDuration(hasPicture ? FADE_MS : 600);
     fade.addListener(new AnimatorListenerAdapter() {
       @Override public void onAnimationEnd(Animator a) {
+        if (out == art[front]) return;   // a later show() made it the front picture again
         out.setAlpha(0f);
         out.setImageDrawable(null);
       }
@@ -186,13 +212,20 @@ final class Gallery {
     }
   }
 
+  // The words fade, not the card: setDimmed() animates the card itself, and a new
+  // animation on the card would cancel this one's end action (and the text change with it).
   private void updateCard(final HomeCars.Car car) {
-    card.animate().alpha(0f).setDuration(card.getAlpha() > 0 ? 300 : 0).withEndAction(() -> {
+    final View[] lines = {number, name, year};
+    for (View l : lines) l.animate().cancel();
+    number.animate().alpha(0f).setDuration(card.getAlpha() > 0 ? 250 : 0).withEndAction(() -> {
       number.setText(cars.numberLine(car).toUpperCase());
       name.setText(car.name);
       year.setText(car.year);
-      card.animate().alpha(1f).setDuration(500).start();
+      for (View l : lines) l.animate().alpha(1f).setDuration(400).start();
     }).start();
+    name.animate().alpha(0f).setDuration(card.getAlpha() > 0 ? 250 : 0).start();
+    year.animate().alpha(0f).setDuration(card.getAlpha() > 0 ? 250 : 0).start();
+    card.animate().alpha(cardTarget()).setDuration(400).start();
   }
 
   private TextView label(float px, int colour, Typeface tf) {

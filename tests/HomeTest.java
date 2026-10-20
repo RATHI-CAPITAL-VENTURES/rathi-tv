@@ -26,7 +26,7 @@ public class HomeTest {
     check("number line counts the cars it has", h.numberLine(db5).equals("No. 37 of 3"));
     check("unknown file -> null", h.byFile("nope.jpg") == null);
     check("empty file -> no cars", HomeCars.parse(Arrays.asList()).all().isEmpty());
-    check("names with quotes and slashes survive", HomeCars.parse(Arrays.asList(
+    check("names with quotes survive", HomeCars.parse(Arrays.asList(
         "b.jpg\tBentley 4.5 Litre 'Blower'\t1927\t3")).all().get(0).name.equals("Bentley 4.5 Litre 'Blower'"));
 
     System.out.println("Greeting — by the hour");
@@ -44,7 +44,8 @@ public class HomeTest {
     check("a film (Netflix, YouTube) -> pause", Playback.shouldPause(java.util.Arrays.asList(Playback.MOVIE)));
     check("music (Spotify) -> keeps playing", !Playback.shouldPause(java.util.Arrays.asList(Playback.MUSIC)));
     check("unlabelled player -> pause, to be safe", Playback.shouldPause(java.util.Arrays.asList(Playback.UNKNOWN)));
-    check("music plus a film -> pause", Playback.shouldPause(java.util.Arrays.asList(Playback.MUSIC, Playback.MOVIE)));
+    check("music plus a film -> nothing (the key could pause the music instead)", !Playback.shouldPause(java.util.Arrays.asList(Playback.MUSIC, Playback.MOVIE)));
+    check("music plus an unlabelled player -> nothing", !Playback.shouldPause(java.util.Arrays.asList(Playback.UNKNOWN, Playback.MUSIC)));
     check("speech or UI sounds -> no", !Playback.shouldPause(java.util.Arrays.asList(Playback.SPEECH, Playback.SONIFICATION)));
 
     if (failed > 0) { System.out.println(failed + " failed"); System.exit(1); }

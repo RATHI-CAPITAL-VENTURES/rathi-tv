@@ -136,6 +136,10 @@ public class MainActivity extends Activity {
     // rathi-tv: everything below the home row (other apps, inputs, icons). Invisible on the
     // home screen, so the second row doesn't peek over the car; fades in with Down.
     private final List<View> belowHome = new ArrayList<>();
+    // rathi-tv: the greeting follows the clock while Home sits idle for hours.
+    private final BroadcastReceiver minuteTick = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) { updateGreeting(); }
+    };
     private int lastKey;       // rathi-tv: the last D-pad key, so a tile leans the way focus came from
     private long lastKeyAt;    // rathi-tv: when (uptime ms): only a fresh key makes a tile lean
     private int tileW, tileH, gridTop; // app grid geometry, set by buildTiles
@@ -264,7 +268,14 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         gallery.pause(); // rathi-tv: no car changes or decoding while an app is in front
+        try { unregisterReceiver(minuteTick); } catch (IllegalArgumentException ignored) {}
         super.onPause();
+    }
+
+    @Override
+    protected void onStop() {
+        gallery.trim(); // rathi-tv: hand the car pictures' memory back while an app is open
+        super.onStop();
     }
 
     @Override
@@ -285,10 +296,12 @@ public class MainActivity extends Activity {
         // rathi-tv: Home always lands on the car with the first app focused. (Back from an
         // app arrives through onResume only, and keeps focus where the app was opened.)
         if (intent != null && intent.hasCategory(Intent.CATEGORY_HOME) && !tiles.isEmpty()) {
+            endMove();
             View first = null;
             for (View t : tiles) if (rowApps.indexOf((String) t.getTag()) == 0) first = t;
-            if (first != null) first.requestFocus();
-            showAll(false, first != null ? first : tiles.get(0));
+            if (first == null) first = tiles.get(0);
+            first.requestFocus();
+            showAll(!isHomeRow((String) first.getTag()), first);
         }
     }
 
@@ -351,6 +364,7 @@ public class MainActivity extends Activity {
         }
         refreshNetwork();
         updateGreeting();
+        registerReceiver(minuteTick, new IntentFilter(Intent.ACTION_TIME_TICK));
         gallery.resume();
         pauseVideoBehind(); // rathi-tv
         View f = getCurrentFocus();
@@ -390,18 +404,33 @@ public class MainActivity extends Activity {
             y = Math.max(0, gridTop - px(ALL_TOP));
             View wrap = (View) tile.getParent();
             int top = ((FrameLayout.LayoutParams) wrap.getLayoutParams()).topMargin;
-            y = Math.max(y, top + tile.getHeight() + px(56) - screenH);
+            // The tile's laid-out height is 0 right after a rebuild; use the known size.
+            int height = tile.getHeight() > 0 ? tile.getHeight() : tileH;
+            y = Math.max(y, top + height + px(56) - screenH);
         }
-        if (all != showingAll || scroller.getScrollY() != y) scroller.smoothScrollTo(0, y);
+        if (scroller.getScrollY() != y) scroller.smoothScrollTo(0, y);
+        if (all == showingAll) return;   // same position: nothing to fade (was ~20 animations a press)
         showingAll = all;
-        allHint.animate().alpha(all ? 0f : 1f).setDuration(200).start();
-        for (View v : belowHome) v.animate().alpha(all ? 1f : 0f).setDuration(250).start();
+        // The scroll is the motion: rows below appear at once rather than fading in over
+        // it, which made Down feel slow on this TV (owner, 2026-10-20).
+        allHint.setAlpha(all ? 0f : 1f);
+        for (View v : belowHome) v.setAlpha(all ? 1f : 0f);
         gallery.setDimmed(all);
     }
 
     private void belowHome(View wrap) {
         belowHome.add(wrap);
         wrap.setAlpha(showingAll ? 1f : 0f);
+    }
+
+    // After a move: re-split the tiles into home row and below-home by their new places.
+    private void syncRows() {
+        for (View t : tiles) {
+            View wrap = (View) t.getParent();
+            String key = (String) t.getTag();
+            if (isHomeRow(key)) { belowHome.remove(wrap); wrap.setAlpha(1f); }
+            else if (!belowHome.contains(wrap)) belowHome(wrap);
+        }
     }
 
     private int bottomY(int col, int bottomTop) {
@@ -417,8 +446,10 @@ public class MainActivity extends Activity {
         android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
         if (am == null || android.os.Build.VERSION.SDK_INT < 26) return;
         List<Integer> types = new ArrayList<>();
-        for (android.media.AudioPlaybackConfiguration c : am.getActivePlaybackConfigurations())
-            types.add(c.getAudioAttributes().getContentType());
+        for (android.media.AudioPlaybackConfiguration c : am.getActivePlaybackConfigurations()) {
+            android.media.AudioAttributes aa = c.getAudioAttributes();
+            if (aa.getUsage() == android.media.AudioAttributes.USAGE_MEDIA) types.add(aa.getContentType());
+        }
         if (!Playback.shouldPause(types)) return;
         long now = android.os.SystemClock.uptimeMillis();
         am.dispatchMediaKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE, 0));
@@ -430,16 +461,13 @@ public class MainActivity extends Activity {
         return i >= 0 && i < PER_ROW;
     }
 
-    private Drawable ring;
-
+    // One drawable per call: a foreground shared by several cards loses its callback when
+    // one card clears it while another is showing it.
     private Drawable focusRing() {
-        if (ring == null) {
-            GradientDrawable g = new GradientDrawable();
-            g.setCornerRadius(px(RADIUS));
-            g.setStroke(px(7), 0xFFFFD84D);
-            ring = g;
-        }
-        return ring;
+        GradientDrawable g = new GradientDrawable();
+        g.setCornerRadius(px(RADIUS));
+        g.setStroke(px(7), 0xFFFFD84D);
+        return g;
     }
 
     private void updateGreeting() {
@@ -553,11 +581,9 @@ public class MainActivity extends Activity {
         int screenH = getResources().getDisplayMetrics().heightPixels;
         gridTop = screenH - px(BOTTOM_GAP) - h;
         int bottomTop = gridTop + rows * px(ROW_STEP) + px(40);
-        iconTop = bottomTop + h + px(40); // provisional: the bottom rows below set it
         ((FrameLayout.LayoutParams) allHint.getLayoutParams()).topMargin = gridTop + h + px(34);
         allHint.requestLayout();
         ((FrameLayout.LayoutParams) moveHint.getLayoutParams()).topMargin = gridTop - px(64);
-        root.setMinimumHeight(iconTop + px(ICON_BUTTON) + px(MARGIN));
 
         for (String pkg : apps) {
             Intent li = launchIntent(pm, pkg);
@@ -591,10 +617,14 @@ public class MainActivity extends Activity {
         addTile(root, SETTINGS, Strings.t("Settings"), null, LineIcon.SETTINGS, null, gridX(col), bottomY(col++, bottomTop), w, h);
         addTile(root, ADD, Strings.t("Add app"), null, LineIcon.PLUS, null, gridX(col), bottomY(col, bottomTop), w, h);
         iconTop = bottomY(col, bottomTop) + h + px(40);
-        root.setMinimumHeight(iconTop + px(ICON_BUTTON) + px(MARGIN));
+        // Tall enough that the all-apps position (row 1 at ALL_TOP) is reachable even with
+        // few apps; a short page capped the scroll and left the dimmed car showing.
+        root.setMinimumHeight(Math.max(iconTop + px(ICON_BUTTON) + px(MARGIN),
+                gridTop - px(ALL_TOP) + screenH));
 
-        // Plain icons at the top right, level with the date: any settings shortcuts picked, then the
-        // network icon. Added last, so the first app keeps first focus; Up from the apps reaches them.
+        // Plain icons, right-aligned below the inputs (rathi-tv; upstream had them by the clock):
+        // any settings shortcuts picked, then the network icon. Added last, so the first app
+        // keeps first focus.
         List<Integer> quick = quickList();
         int ib = px(ICON_BUTTON), ig = px(ICON_GAP);
         // The last icon's right edge lines up with the apps' (its focus circle sticks out past them).
@@ -685,7 +715,8 @@ public class MainActivity extends Activity {
             card.setForeground(has ? focusRing() : null);
             if (has) {
                 showAll(!isHomeRow(key), v);
-                if (hasArt) shelf.show(key); else shelf.clear();
+                // The car covers the shelf on the first screen; only the all-apps page uses it.
+                if (hasArt && !isHomeRow(key)) shelf.show(key); else shelf.clear();
                 int k = Tilt.keyFor(lastKey, android.os.SystemClock.uptimeMillis() - lastKeyAt);
                 v.setRotationY(Tilt.yFor(k));
                 v.setRotationX(Tilt.xFor(k));
@@ -1203,25 +1234,32 @@ public class MainActivity extends Activity {
                     lp.topMargin = gridY(i);
                     wrap.setLayoutParams(lp);
                 }
-                // Scroll along with it once it has moved.
-                final View card = tile(key);
-                card.post(() -> card.requestRectangleOnScreen(
-                        new android.graphics.Rect(0, 0, card.getWidth(), card.getHeight())));
+                // rathi-tv: an app that crossed into or out of the home row changes which
+                // tiles are hidden at rest; and the page follows the moving tile (ScrollView's
+                // own requestRectangleOnScreen no longer scrolls, by design).
+                syncRows();
+                showAll(!isHomeRow(key), tile(key));
             }
             return true;
         }
         if (ok || code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_MENU) {
-            if (!down) {
-                movingKey = null;
-                longPressed = false;
-                ((FrameLayout) tile(key)).setForeground(null);
-                moveHint.setVisibility(View.GONE);
-                saveRow();
-                refreshApps();
-            }
+            if (!down) endMove();
             return true;
         }
         return true; // up/down and everything else stay put while moving
+    }
+
+    // rathi-tv: one way out of move mode, shared by OK/Back/Menu and by Home.
+    private void endMove() {
+        if (movingKey == null) return;
+        View card = tile(movingKey);
+        movingKey = null;
+        longPressed = false;
+        if (card != null) ((FrameLayout) card).setForeground(card.hasFocus() ? focusRing() : null);
+        moveHint.setVisibility(View.GONE);
+        saveRow();
+        dirty = true;   // rows changed: rebuild so the home row / below-home split is fresh
+        refreshApps();
     }
 
     private static boolean isInput(String key) {

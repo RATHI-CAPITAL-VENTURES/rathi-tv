@@ -9,3 +9,4 @@
 # Build output; the signing key lives in ~/.config/rathi-tv/.
 out/
 *.jks
+__pycache__/

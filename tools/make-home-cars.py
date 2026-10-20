@@ -14,7 +14,9 @@ title_case() turns "ASTON MARTIN DB5" into "Aston Martin DB5".
 import json
 import pathlib
 import re
+import shutil
 import sys
+import tempfile
 
 from PIL import Image
 
@@ -60,21 +62,36 @@ def title_case(name):
 
 def main():
     rows = [r for r in json.load(open(CARS / "pipeline/catalog.json")) if not r.get("skip")]
-    rows.sort(key=lambda r: (int(r["year"]), r["slug"]))
-    OUT.mkdir(parents=True, exist_ok=True)
-    for old in OUT.glob("*.jpg"):
-        old.unlink()
+    slugs = [r["slug"] for r in rows]
+    dupes = {x for x in slugs if slugs.count(x) > 1}
+    if dupes:
+        sys.exit(f"duplicate slugs in the catalogue: {sorted(dupes)}")
+    missing = [x for x in slugs if not (CARS / "work" / f"{x}_big.png").exists()]
+    if missing:
+        sys.exit(f"no render for: {missing}")
+    rows.sort(key=lambda r: (int(str(r["year"])[:4]), r["slug"]))
+    # Build beside the real folder and swap at the end, so a failure halfway never leaves
+    # a cars.tsv naming pictures that were already deleted.
+    tmp = pathlib.Path(tempfile.mkdtemp(dir=OUT.parent, prefix=".home-"))
     lines = []
     for n, r in enumerate(rows, 1):
-        src = CARS / "work" / f"{r['slug']}_big.png"
-        im = Image.open(src).convert("RGB")
+        im = Image.open(CARS / "work" / f"{r['slug']}_big.png").convert("RGB")
         w, h = im.size
-        ch = round(w * 9 / 16)
-        top = max(0, min(h - ch, round(h * FOCUS_Y - ch / 2)))
-        im = im.crop((0, top, w, top + ch)).resize((W, H), Image.LANCZOS)
-        im.save(OUT / f"{r['slug']}.jpg", quality=82, optimize=True, progressive=False)
+        if w * 9 >= h * 16:   # wider than 16:9: crop the sides, centred
+            cw = round(h * 16 / 9)
+            left = (w - cw) // 2
+            box = (left, 0, left + cw, h)
+        else:                 # taller (the 3:2 renders): crop top and bottom around FOCUS_Y
+            ch = round(w * 9 / 16)
+            top = max(0, min(h - ch, round(h * FOCUS_Y - ch / 2)))
+            box = (0, top, w, top + ch)
+        im.crop(box).resize((W, H), Image.LANCZOS).save(
+            tmp / f"{r['slug']}.jpg", quality=82, optimize=True, progressive=False)
         lines.append(f"{r['slug']}.jpg\t{title_case(r['name'])}\t{r['year']}\t{n}")
-    (OUT / "cars.tsv").write_text("\n".join(lines) + "\n")
+    (tmp / "cars.tsv").write_text("\n".join(lines) + "\n")
+    if OUT.exists():
+        shutil.rmtree(OUT)
+    tmp.rename(OUT)
     print(f"{len(lines)} cars -> {OUT}")
 
 

@@ -18,11 +18,19 @@ final class Playback {
 
   private Playback() {}
 
-  /** Pause on Home if anything playing is a film or programme (or can't say). */
+  /**
+   * Pause on Home if a film or programme (or an unlabelled media player) is playing and
+   * no music is. The Pause key goes to whichever session Android routes media buttons
+   * to, usually the most recent player; with music also playing it could pause the
+   * music instead and leave the film running, so then nothing is sent (review, PR #3).
+   * Only USAGE_MEDIA players are passed in: Assistant replies and UI sounds don't count.
+   */
   static boolean shouldPause(List<Integer> playingContentTypes) {
+    boolean video = false;
     for (int t : playingContentTypes) {
-      if (t == MOVIE || t == UNKNOWN) return true;   // most video apps; and unlabelled players
+      if (t == MUSIC) return false;
+      if (t == MOVIE || t == UNKNOWN) video = true;
     }
-    return false;                                     // music, speech, UI sounds
+    return video;
   }
 }

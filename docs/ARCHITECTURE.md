@@ -47,6 +47,13 @@ card" direction with big tiles, no names under them, and every app one press dow
   `assets/home/cars.tsv`: the name (title-cased from the catalogue's capitals, with
   a keep-as-is list: DB5, NSX, McLaren, R/T …), the year, and the number in the
   collection (oldest first). The screensaver keeps the captioned set in `assets/cars`.
+- **Speed:** a Down press scrolls (ScrollView's 250 ms smooth scroll) and, only when
+  the position changes, shows the rows at once and dims the car (200 ms). The first
+  build faded ~20 views on every press, even within the same position, and the owner
+  found it slow. Measured after the change: settled within 0.35 s.
+- **Memory:** the TV runs with ~250 MB free and swap full; Plex alone holds 330 MB.
+  `Gallery.trim()` drops the car pictures in `onStop`, so the home screen holds 35 MB,
+  not 50, while an app is open. A car is decoded again on return (~60 ms).
 - **The car changes slowly while idle:** every 3 minutes while Home is in front (owner's
   choice over "every time Home opens"). It doesn't change while an app is open, and
   the decode thread stops in `onPause`.
