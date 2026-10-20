@@ -65,7 +65,10 @@ screen up to the clock, and there's no room for a banner above it.
   return early when `showingKey` was already null, so after a rebuild the
   uninstalled app's art could stay on screen (re-review).
 - **Browsing speed:** at ~3 presses a second, the incoming layer can still be fading
-  out from two moves back. It's snapped to 0 before its picture is swapped. Fades use
+  out from two moves back. The incoming layer is whichever is **dimmer now**, not the
+  other index (140–225 ms apart, the other one is still the brighter). It's snapped to
+  0 before its picture is swapped. A fade already at its last target is skipped (the
+  target is kept as a view tag), so clears between glass tiles cost nothing. Fades use
   `withLayer()`, so the full-screen layer is drawn once, not every frame.
 - **Tiles:** a tile taking focus starts 7° rotated toward the side focus came from
   (from the last D-pad key in `dispatchKeyEvent`) and settles flat over 300 ms while

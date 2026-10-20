@@ -42,6 +42,8 @@ final class Shelf {
   // 24x14 still showed blocky letters (NETFLIX was readable); 10x6 is a wash of colour.
   static final int SMALL_W = 10, SMALL_H = 6;
   static final int SAMPLE_W = 64, SAMPLE_H = 36;
+  // View tag key for a fade's target (keyed tags need an id-shaped int: top byte set).
+  private static final int R_TARGET = 0x7f0f0001;
 
   private final Context context;
   private final FrameLayout view;
@@ -127,8 +129,9 @@ final class Shelf {
   }
 
   private void apply(String key) {
-    // Only "same app again" is skipped. A clear always runs: fading what's already at
-    // 0 costs nothing, and skipping it on showingKey == null left art stuck on screen.
+    // Only "same app again" is skipped. A clear always runs (skipping it on
+    // showingKey == null left art stuck on screen); fade() makes it free for a view
+    // that is already at 0.
     if (key != null && key.equals(showingKey)) return;
     Bitmap b = key == null ? null : blurred.get(key);
     if (b == null) {
@@ -139,14 +142,17 @@ final class Shelf {
       return;
     }
     showingKey = key;
-    FrameLayout out = layer[shown];
-    shown = 1 - shown;
-    FrameLayout in = layer[shown];
-    // At browsing speed the incoming layer can still be fading out from two moves ago
-    // (~0.3 alpha); swapping its picture there is a visible cut. Snap it to 0 first:
-    // it is always the dimmer layer, so this is the smallest cut available.
+    // The incoming layer is whichever is dimmer NOW, not the other index: with two
+    // changes 140-225 ms apart the "other" layer can still be the brighter one
+    // (third review), and snapping that to 0 is a bigger cut, not a smaller one.
+    shown = layer[0].getAlpha() <= layer[1].getAlpha() ? 0 : 1;
+    FrameLayout in = layer[shown], out = layer[1 - shown];
+    // At browsing speed the incoming layer can still be fading out from two moves ago;
+    // swapping its picture there is a visible cut. Snap it to 0 first: chosen above as
+    // the dimmer layer, so this is the smallest cut available.
     in.animate().cancel();
     in.setAlpha(0f);
+    in.setTag(R_TARGET, 0f);
     art[shown].setImageBitmap(b);
     Integer c = colours.get(key);
     if (c != null) {
@@ -171,6 +177,12 @@ final class Shelf {
   // (art + tint) faded without one is redrawn offscreen, full screen, every frame;
   // nothing inside changes during a fade, so a hardware layer is drawn once.
   private static void fade(View v, float to) {
+    // Last asked for this, and already there: no animator, and no full-screen hardware
+    // layer built just to stay invisible (third review). The target is kept on the
+    // view, because alpha == to alone can be true while a fade is leaving `to`.
+    Object last = v.getTag(R_TARGET);
+    if (last instanceof Float && (Float) last == to && v.getAlpha() == to) return;
+    v.setTag(R_TARGET, to);
     v.animate().alpha(to).setDuration(FADE_MS).withLayer().start();
   }
 
