@@ -1,5 +1,7 @@
 package com.rathi.tv.home;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.animation.ObjectAnimator;
 import android.animation.PropertyValuesHolder;
 import android.graphics.Bitmap;
@@ -43,6 +45,11 @@ public class CarsDream extends DreamService {
   private ImageView front, back;
   private TextClock clock;
   private boolean running;
+  // Bumped on every start and stop: a decode posted by an earlier session compares
+  // its number and drops itself, instead of relying on `running` alone.
+  private int generation;
+  private int failures;
+  private ObjectAnimator fade, push;
 
   @Override public void onAttachedToWindow() {
     super.onAttachedToWindow();
@@ -76,6 +83,8 @@ public class CarsDream extends DreamService {
   @Override public void onDreamingStarted() {
     super.onDreamingStarted();
     running = true;
+    generation++;
+    failures = 0;
     worker = new HandlerThread("cars");
     worker.start();
     io = new Handler(worker.getLooper());
@@ -84,21 +93,42 @@ public class CarsDream extends DreamService {
 
   @Override public void onDreamingStopped() {
     running = false;
+    generation++;
     main.removeCallbacksAndMessages(null);
     if (worker != null) worker.quitSafely();
+    // A push-in runs 21.8 s; left alone it keeps ticking on a detached window and
+    // holds both bitmaps until it ends.
+    if (fade != null) fade.cancel();
+    if (push != null) push.cancel();
     super.onDreamingStopped();
+  }
+
+  @Override public void onDetachedFromWindow() {
+    if (front != null) front.setImageDrawable(null);
+    if (back != null) back.setImageDrawable(null);
+    super.onDetachedFromWindow();
   }
 
   /** Decode the next car off the main thread, then show it. */
   private void loadNext() {
     final String name = deck.next();
     if (name == null || io == null) return;
+    final int gen = generation;
     io.post(() -> {
       final Bitmap bmp = decode("cars/" + name);
       main.post(() -> {
-        if (!running) return;
-        if (bmp != null) show(bmp, name);
-        main.postDelayed(this::loadNext, bmp == null ? 0 : SHOW_MS);
+        if (!running || gen != generation) return;
+        if (bmp != null) {
+          failures = 0;
+          show(bmp, name);
+          main.postDelayed(this::loadNext, SHOW_MS);
+          return;
+        }
+        // A failed decode (low memory, a bad file) must not spin: back off, and stop
+        // trying once every car has failed in a row. The last picture stays up.
+        failures++;
+        if (failures >= deck.size()) return;
+        main.postDelayed(this::loadNext, Math.min(SHOW_MS, 1000L << Math.min(failures, 5)));
       });
     });
   }
@@ -116,9 +146,17 @@ public class CarsDream extends DreamService {
     clock.bringToFront();   // the new picture would otherwise cover it
     // Two animators, not two view.animate() calls: those share one animator, and the
     // second duration would replace the fade's.
-    ObjectAnimator fade = ObjectAnimator.ofFloat(incoming, View.ALPHA, 0f, 1f);
+    final ImageView outgoing = front;
+    fade = ObjectAnimator.ofFloat(incoming, View.ALPHA, 0f, 1f);
     fade.setDuration(FADE_MS);
-    ObjectAnimator push = ObjectAnimator.ofPropertyValuesHolder(incoming,
+    // Once the new picture covers it, drop the old one: it would otherwise be drawn,
+    // hidden, every frame for 20 s and held while the next car decodes (3 bitmaps).
+    fade.addListener(new AnimatorListenerAdapter() {
+      @Override public void onAnimationEnd(Animator a) {
+        if (outgoing != front) outgoing.setImageDrawable(null);
+      }
+    });
+    push = ObjectAnimator.ofPropertyValuesHolder(incoming,
         PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, ZOOM),
         PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, ZOOM));
     push.setDuration(SHOW_MS + FADE_MS);

@@ -35,10 +35,27 @@ Home went straight to the new launcher. Only `launcherx` is disabled
 - **Z-order:** each incoming picture is `bringToFront()`ed, so the clock has to be
   brought front after it. The first build hid the clock behind the second picture.
 - **Decoding** happens on a `HandlerThread` while the current car is on screen.
+- **Memory:** at most two 8 MB bitmaps. The outgoing picture is released when the fade
+  ends. Otherwise it would sit under the new one, drawn every frame for 20 s and
+  still held while the next car decodes (3 bitmaps at peak).
+- **Stopping:** `onDreamingStopped` cancels both animators. A 21.8 s push-in left
+  running keeps ticking on a detached window and holds the bitmaps.
+  `onDetachedFromWindow` clears the views, and a `generation` counter drops decodes
+  posted by an earlier session. Checked on the TV: four start/stop cycles in a row,
+  no crash, native heap ~57 MB.
+- **Failure:** a failed decode (low memory, a bad file) backs off 2, 4 … 20 s, and
+  stops once every car has failed in a row. The last picture stays up. The first
+  build retried at 0 ms and would have spun a core.
+- **Rejected: moving the clock against burn-in.** The X90L is an LED panel, not
+  OLED. On an OLED this would need revisiting.
 - **Settings:** `install.sh` sets `secure screensaver_components` to
-  `com.rathi.tv.home/.CarsDream` and saves the previous value (Sony's Living Decor,
-  `com.sony.dtv.livingfit/...MainDreamService`) to
-  `/data/local/tmp/rathi-tv-screensaver-prev.txt`; `undo.sh` restores it. When it
+  `com.rathi.tv.home/.CarsDream`, first saving the previous component *and*
+  `screensaver_enabled` (Sony's Living Decor, on) as two lines in
+  `/data/local/tmp/rathi-tv-screensaver-prev.txt`, once only. `undo.sh` restores
+  them only if the cars are still the screensaver; a choice made in Settings since
+  then wins. A saved `null` is restored by deleting the key, not by writing the word.
+  Round trip checked on the TV: undo put Living Decor back (enabled 1, record removed),
+  then reinstall saved it again. When it
   starts (`system screen_off_timeout` = 10 min) and when the TV sleeps
   (`secure sleep_timeout` = 30 min) are left as they were.
 - **Test it without waiting:** `adb shell am start -n com.android.systemui/.Somnambulator`.

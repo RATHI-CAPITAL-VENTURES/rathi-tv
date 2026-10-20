@@ -1,5 +1,7 @@
 #!/bin/sh
-# Installs the home screen on your TV and makes it the default. Only needs adb.
+# Builds this repo and installs it on the TV as Home and screensaver.
+# Needs adb, a JDK and the Android SDK (platforms;android-34, build-tools;34.0.0),
+# because it always builds first; see build.sh.
 #
 #   sh install.sh <TV_IP>                          your TV apps, picked for you
 #   sh install.sh <TV_IP> "com.netflix.ninja,com.google.android.youtube.tv"
@@ -227,18 +229,23 @@ else
   echo "Installed, but your TV still opens its own home screen. If it asks which home screen to use, pick \"Home\" and choose Always."
 fi
 
-# The screensaver. The one it replaces is saved on the TV first (once), so undo.sh
-# can put it back. When it starts and when the TV sleeps are left as they were.
+# The screensaver. What it replaces (which screensaver, and whether one was on at
+# all) is saved on the TV first, once, so undo.sh can put both back. When it starts
+# and when the TV sleeps are left as they were.
 DREAM=com.rathi.tv.home/.CarsDream
 PREV=/data/local/tmp/rathi-tv-screensaver-prev.txt
 cur=$(sh_tv settings get secure screensaver_components)
 if [ "$cur" != "$DREAM" ]; then
-  sh_tv "[ -e $PREV ] || echo '$cur' > $PREV"
-  sh_tv settings put secure screensaver_components "$DREAM"
-  sh_tv settings put secure screensaver_enabled 1
+  was_on=$(sh_tv settings get secure screensaver_enabled)
+  if ! sh_tv "[ -e $PREV ] || printf '%s\\n%s\\n' '$cur' '$was_on' > $PREV"; then
+    echo "Couldn't save the current screensaver, so it was left as it is." >&2
+  else
+    sh_tv settings put secure screensaver_components "$DREAM"
+    sh_tv settings put secure screensaver_enabled 1
+  fi
 fi
 if [ "$(sh_tv settings get secure screensaver_components)" = "$DREAM" ]; then
   echo "Screensaver: the cars."
 else
-  echo "Couldn't set the screensaver. Pick \"Rathi cars\" in Settings > System > Ambient mode." >&2
+  echo "Screensaver not set. Pick \"Rathi cars\" in Settings > System > Ambient mode." >&2
 fi

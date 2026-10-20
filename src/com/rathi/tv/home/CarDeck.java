@@ -21,6 +21,8 @@ final class CarDeck {
     this.random = random;
   }
 
+  int size() { return cars.size(); }
+
   /** The next car, or null if there are none. */
   String next() {
     if (cars.isEmpty()) return null;
@@ -40,7 +42,7 @@ final class CarDeck {
 
   /** "aston_martin_db5_1963.jpg" -> "1963 Aston Martin Db5", for logs and accessibility. */
   static String title(String file) {
-    String base = file.replaceAll("\\.[a-z]+$", "");
+    String base = file.replaceAll("(?i)\\.[a-z]+$", "");
     String[] parts = base.split("_");
     StringBuilder name = new StringBuilder();
     String year = "";

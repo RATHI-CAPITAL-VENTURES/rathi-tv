@@ -35,9 +35,11 @@ cp out/base.apk out/unsigned.apk; (cd out/dex && zip -q ../unsigned.apk classes.
 # A signing key is made on first build, OUTSIDE the repo (~/.config/rathi-tv/key.jks).
 # Keep it: updates must be signed with the same key.
 # (Releases are signed with their own key: set KEYSTORE and KEYSTORE_PASS.)
+# The default password is in this public-to-the-org file on purpose: the key itself
+# never enters the repo (*.jks is ignored), so the password alone unlocks nothing.
 KS=${KEYSTORE:-$HOME/.config/rathi-tv/key.jks}; PASS=${KEYSTORE_PASS:-rathitv}
 mkdir -p "$(dirname "$KS")"
 [ -f "$KS" ] || keytool -genkeypair -keystore "$KS" -storepass "$PASS" -keypass "$PASS" -alias tvhome \
-  -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=tvhome" >/dev/null 2>&1
+  -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=tvhome" >/dev/null
 "$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$PASS" --out out/tvhome.apk out/aligned.apk
 echo "Built out/tvhome.apk"

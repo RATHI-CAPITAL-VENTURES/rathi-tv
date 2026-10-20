@@ -53,14 +53,29 @@ case $rc in
   *) echo "Couldn't check $W." >&2; failed=1 ;;
 esac
 
-# Put back the screensaver install.sh replaced.
+# Put back the screensaver install.sh replaced, but only if the cars are still the
+# screensaver: a choice made in Settings since then wins. "null" (nothing was set)
+# is restored by deleting the key, not by writing the word.
 PREV=/data/local/tmp/rathi-tv-screensaver-prev.txt
-prev=$(adb -s "$TV" shell "cat $PREV 2>/dev/null" | tr -d '\r')
-if [ -n "$prev" ]; then
-  adb -s "$TV" shell settings put secure screensaver_components "'$prev'"
-  adb -s "$TV" shell "rm -f $PREV"
-  echo "Screensaver back to $prev"
+DREAM=com.rathi.tv.home/.CarsDream
+put_or_delete() { # key value
+  if [ -z "$2" ] || [ "$2" = null ]; then adb -s "$TV" shell settings delete secure "$1" >/dev/null
+  else adb -s "$TV" shell settings put secure "$1" "'$2'"; fi
+}
+now=$(adb -s "$TV" shell settings get secure screensaver_components | tr -d '\r')
+saved=$(adb -s "$TV" shell "cat $PREV 2>/dev/null" | tr -d '\r')
+if [ "$now" = "$DREAM" ]; then
+  if [ -n "$saved" ]; then
+    put_or_delete screensaver_components "$(printf '%s\n' "$saved" | sed -n 1p)"
+    put_or_delete screensaver_enabled "$(printf '%s\n' "$saved" | sed -n 2p)"
+    echo "Screensaver put back."
+  else
+    # No record of what was there: don't leave it pointing at an app about to go.
+    adb -s "$TV" shell settings delete secure screensaver_components >/dev/null
+    echo "Screensaver reset to the TV's default (no record of the previous one)."
+  fi
 fi
+adb -s "$TV" shell "rm -f $PREV"
 
 # If something stayed off, keep this home screen and the list, so Home still works and
 # undo.sh can try again.
