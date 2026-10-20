@@ -75,7 +75,8 @@ public class MainActivity extends Activity {
     private static final String ADD = "add";
     private static final String[] EDIT_ITEMS = {"Move", "Replace", "Remove from home", "Uninstall"};
     private static final String[] EDIT_ITEMS_SYSTEM = {"Move", "Replace", "Remove from home", "App info"};
-    private static final int PER_ROW = 6, MAX_INPUTS = 4;
+    // rathi-tv: five big tiles a row (the home row is the first five apps).
+    private static final int PER_ROW = 5, MAX_INPUTS = 4;
 
     // Settings shortcuts: name, label, icon. Tile keys are QUICK + name.
     private static final String QUICK = "quick:";
@@ -89,7 +90,11 @@ public class MainActivity extends Activity {
 
     // Layout is designed at 1920x1080 and scaled to the TV's real UI size by px().
     private static final int MARGIN = 96, GAP = 36, RADIUS = 22;
-    private static final int ROW1_TOP = 604, ROW_STEP = 224;
+    // rathi-tv: no names under tiles, so a row is a tile plus its gap (was 224 with captions).
+    private static final int ROW1_TOP = 604, ROW_STEP = 208;
+    // rathi-tv: the home row sits this far above the screen's bottom edge, on the car;
+    // pressing Down scrolls so the first row of apps sits ALL_TOP from the top.
+    private static final int BOTTOM_GAP = 114, ALL_TOP = 138;
     private static final int GRID_MIN_TOP = 400; // more rows push the grid up, but not into the clock
     private static final int ICON_TOP = 76, ICON_BUTTON = 72, ICON_SIZE = 40, ICON_GAP = 12; // level with the date
 
@@ -123,6 +128,14 @@ public class MainActivity extends Activity {
 
     private FrameLayout root; // the page, inside a vertical scroller
     private Shelf shelf;       // rathi-tv: the focused app's art behind the page
+    private Gallery gallery;   // rathi-tv: the car and its museum card on the first screen
+    private ScrollView scroller;
+    private TextView greeting, allHint;
+    private int iconTop;       // rathi-tv: the shortcut icons' row, below the inputs
+    private boolean showingAll;
+    // rathi-tv: everything below the home row (other apps, inputs, icons). Invisible on the
+    // home screen, so the second row doesn't peek over the car; fades in with Down.
+    private final List<View> belowHome = new ArrayList<>();
     private int lastKey;       // rathi-tv: the last D-pad key, so a tile leans the way focus came from
     private long lastKeyAt;    // rathi-tv: when (uptime ms): only a fresh key makes a tile lean
     private int tileW, tileH, gridTop; // app grid geometry, set by buildTiles
@@ -168,7 +181,12 @@ public class MainActivity extends Activity {
         scale = getResources().getDisplayMetrics().widthPixels / 1920f;
         showWallpaper(wallpaper());
 
-        ScrollView scroller = new ScrollView(this);
+        // rathi-tv: the page has two positions (home, all apps) and showAll() picks them;
+        // ScrollView's own scroll-to-keep-focus-visible would fight it.
+        scroller = new ScrollView(this) {
+            @Override
+            protected int computeScrollDeltaToGetChildRectOnScreen(android.graphics.Rect r) { return 0; }
+        };
         scroller.setFillViewport(true);
         scroller.setVerticalScrollBarEnabled(false);
         scroller.setOverScrollMode(View.OVER_SCROLL_NEVER);
@@ -177,20 +195,44 @@ public class MainActivity extends Activity {
         root.setClipChildren(false);
         scroller.addView(root, new FrameLayout.LayoutParams(-1, -2));
 
+        // rathi-tv: the car fills the first screen; it is page content, so it scrolls away.
+        int screenW = getResources().getDisplayMetrics().widthPixels;
+        int screenH = getResources().getDisplayMetrics().heightPixels;
+        gallery = new Gallery(this, scale);
+        root.addView(gallery.backdrop(), at(0, 0, screenW, screenH));
+
+        // rathi-tv: big time, then "Good evening, Ishan", then the date on its own line.
         LinearLayout clock = new LinearLayout(this);
         clock.setOrientation(LinearLayout.VERTICAL);
         shownLocale = java.util.Locale.getDefault();
-        String day = Strings.datePattern();
-        TextClock date = clock(day, day, px(30), 0xA8FFFFFF, regular);
-        TextClock time = clock("h:mm", "H:mm", px(176), Color.WHITE, semibold);
-        time.setLetterSpacing(-0.028f);
+        TextClock time = clock("h:mm", "H:mm", px(120), Color.WHITE, Typeface.create("serif", Typeface.NORMAL));
         time.setFontFeatureSettings("tnum");
         time.setIncludeFontPadding(false);
+        time.setShadowLayer(px(16), 0, px(2), 0x80000000);
+        clock.addView(time);
+        greeting = text(px(33), 0xE6FFFFFF, regular);
+        greeting.setShadowLayer(px(12), 0, px(2), 0x80000000);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.topMargin = px(6);
+        clock.addView(greeting, lp);
+        String day = Strings.datePattern();
+        TextClock date = clock(day, day, px(28), 0xB8FFFFFF, regular);
+        date.setShadowLayer(px(12), 0, px(2), 0x80000000);
         clock.addView(date);
-        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, -2);
-        tp.topMargin = px(-20); // pull the big digits up under the date
-        clock.addView(time, tp);
-        root.addView(clock, at(px(MARGIN), px(92), -2, -2));
+        root.addView(clock, at(px(MARGIN), px(60), -2, -2));
+        updateGreeting();
+
+        // rathi-tv: the museum card, top right.
+        FrameLayout.LayoutParams cardAt = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
+        cardAt.topMargin = px(66);
+        cardAt.rightMargin = px(84);
+        root.addView(gallery.card(), cardAt);
+
+        // rathi-tv: the hint under the home row; buildTiles() places it.
+        allHint = text(px(25), 0x9EFFFFFF, regular);
+        allHint.setText("▾  All apps, inputs and settings");
+        allHint.setGravity(Gravity.CENTER_HORIZONTAL);
+        root.addView(allHint, at(0, 0, screenW, -2));
 
         moveHint = text(px(24), 0xA8FFFFFF, regular);
         moveHint.setText(Strings.t("Use the arrows to move it, then press OK"));
@@ -220,7 +262,14 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        gallery.pause(); // rathi-tv: no car changes or decoding while an app is in front
+        super.onPause();
+    }
+
+    @Override
     protected void onDestroy() {
+        gallery.release(); // rathi-tv
         shelf.release(); // rathi-tv
         unregisterReceiver(packagesChanged);
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -233,6 +282,14 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         if (saveConfig(intent)) buildTiles();
+        // rathi-tv: Home always lands on the car with the first app focused. (Back from an
+        // app arrives through onResume only, and keeps focus where the app was opened.)
+        if (intent != null && intent.hasCategory(Intent.CATEGORY_HOME) && !tiles.isEmpty()) {
+            View first = null;
+            for (View t : tiles) if (rowApps.indexOf((String) t.getTag()) == 0) first = t;
+            if (first != null) first.requestFocus();
+            showAll(false, first != null ? first : tiles.get(0));
+        }
     }
 
     // Saves an app list passed with --es apps "..." and shortcuts passed with --es quick "...".
@@ -293,6 +350,9 @@ public class MainActivity extends Activity {
             buildTiles();
         }
         refreshNetwork();
+        updateGreeting();
+        gallery.resume();
+        pauseVideoBehind(); // rathi-tv
         View f = getCurrentFocus();
         if (f == null && !tiles.isEmpty()) tiles.get(0).requestFocus();
     }
@@ -318,6 +378,75 @@ public class MainActivity extends Activity {
     public void onConfigurationChanged(android.content.res.Configuration c) {
         super.onConfigurationChanged(c);
         if (!java.util.Locale.getDefault().equals(shownLocale)) recreate();
+    }
+
+    // rathi-tv: the page's two positions. Home: scrolled to the top, the car and the home
+    // row. All: the first row of apps near the top, the car scrolled away; a tile further
+    // down (more apps than fit, the icons) scrolls just far enough to be seen.
+    private void showAll(boolean all, View tile) {
+        int screenH = getResources().getDisplayMetrics().heightPixels;
+        int y = 0;
+        if (all) {
+            y = Math.max(0, gridTop - px(ALL_TOP));
+            View wrap = (View) tile.getParent();
+            int top = ((FrameLayout.LayoutParams) wrap.getLayoutParams()).topMargin;
+            y = Math.max(y, top + tile.getHeight() + px(56) - screenH);
+        }
+        if (all != showingAll || scroller.getScrollY() != y) scroller.smoothScrollTo(0, y);
+        showingAll = all;
+        allHint.animate().alpha(all ? 0f : 1f).setDuration(200).start();
+        for (View v : belowHome) v.animate().alpha(all ? 1f : 0f).setDuration(250).start();
+        gallery.setDimmed(all);
+    }
+
+    private void belowHome(View wrap) {
+        belowHome.add(wrap);
+        wrap.setAlpha(showingAll ? 1f : 0f);
+    }
+
+    private int bottomY(int col, int bottomTop) {
+        return bottomTop + (col / PER_ROW) * px(ROW_STEP);
+    }
+
+    // rathi-tv: see Playback. Asking for focus is what makes a film behind Home pause;
+    // it is handed straight back, so nothing of ours holds the audio.
+    private void pauseVideoBehind() {
+        android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+        if (am == null || android.os.Build.VERSION.SDK_INT < 26) return;
+        List<Integer> types = new ArrayList<>();
+        for (android.media.AudioPlaybackConfiguration c : am.getActivePlaybackConfigurations())
+            types.add(c.getAudioAttributes().getContentType());
+        if (!Playback.shouldPause(types)) return;
+        android.media.AudioFocusRequest r = new android.media.AudioFocusRequest.Builder(
+                android.media.AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(new android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE).build())
+                .build();
+        am.requestAudioFocus(r);
+        am.abandonAudioFocusRequest(r);
+    }
+
+    private boolean isHomeRow(String key) {
+        int i = rowApps.indexOf(key);
+        return i >= 0 && i < PER_ROW;
+    }
+
+    private Drawable ring;
+
+    private Drawable focusRing() {
+        if (ring == null) {
+            GradientDrawable g = new GradientDrawable();
+            g.setCornerRadius(px(RADIUS));
+            g.setStroke(px(7), 0xFFFFD84D);
+            ring = g;
+        }
+        return ring;
+    }
+
+    private void updateGreeting() {
+        if (greeting != null)
+            greeting.setText(Greeting.forHour(java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)));
     }
 
     // rathi-tv: remember the direction of travel for the tiles' lean.
@@ -403,6 +532,7 @@ public class MainActivity extends Activity {
         }
         tiles.clear();
         rowApps.clear();
+        belowHome.clear();
         shelf.forget();
         movingKey = null;
         moveHint.setVisibility(View.GONE);
@@ -420,10 +550,16 @@ public class MainActivity extends Activity {
         int launchable = 0;
         for (String pkg : apps) if (launchIntent(pm, pkg) != null) launchable++;
         int rows = Math.max(1, (launchable + PER_ROW - 1) / PER_ROW);
-        gridTop = Math.max(px(GRID_MIN_TOP), px(ROW1_TOP) - (rows - 1) * px(ROW_STEP));
-        int bottomTop = gridTop + rows * px(ROW_STEP);
+        // rathi-tv: the home row sits on the car near the bottom of the first screen; the
+        // other rows continue below it, then the inputs, then the shortcut icons.
+        int screenH = getResources().getDisplayMetrics().heightPixels;
+        gridTop = screenH - px(BOTTOM_GAP) - h;
+        int bottomTop = gridTop + rows * px(ROW_STEP) + px(40);
+        iconTop = bottomTop + h + px(40); // provisional: the bottom rows below set it
+        ((FrameLayout.LayoutParams) allHint.getLayoutParams()).topMargin = gridTop + h + px(34);
+        allHint.requestLayout();
         ((FrameLayout.LayoutParams) moveHint.getLayoutParams()).topMargin = gridTop - px(64);
-        root.setMinimumHeight(bottomTop + h + px(MARGIN));
+        root.setMinimumHeight(iconTop + px(ICON_BUTTON) + px(MARGIN));
 
         for (String pkg : apps) {
             Intent li = launchIntent(pm, pkg);
@@ -447,14 +583,17 @@ public class MainActivity extends Activity {
         int col = 0;
         boolean store = !apps.contains(PLAY_STORE) && launchIntent(pm, PLAY_STORE) != null;
         List<TvInputInfo> inputs = hdmiInputs();
-        int room = PER_ROW - 2 - (store ? 1 : 0);
-        if (inputs.size() > room) inputs = inputs.subList(0, room);
+        // rathi-tv: every input (up to MAX_INPUTS); the row wraps at PER_ROW like the apps,
+        // since five big tiles a row left room for only two inputs.
+        if (inputs.size() > MAX_INPUTS) inputs = inputs.subList(0, MAX_INPUTS);
         if (store)
-            addTile(root, PLAY_STORE, "Play Store", null, LineIcon.PLAY, null, m + col++ * (w + g), bottomTop, w, h);
+            addTile(root, PLAY_STORE, "Play Store", null, LineIcon.PLAY, null, gridX(col), bottomY(col++, bottomTop), w, h);
         for (TvInputInfo in : inputs)
-            addTile(root, in.getId(), inputLabel(in), null, LineIcon.HDMI, null, m + col++ * (w + g), bottomTop, w, h);
-        addTile(root, SETTINGS, Strings.t("Settings"), null, LineIcon.SETTINGS, null, m + col++ * (w + g), bottomTop, w, h);
-        addTile(root, ADD, Strings.t("Add app"), null, LineIcon.PLUS, null, m + col * (w + g), bottomTop, w, h);
+            addTile(root, in.getId(), inputLabel(in), null, LineIcon.HDMI, null, gridX(col), bottomY(col++, bottomTop), w, h);
+        addTile(root, SETTINGS, Strings.t("Settings"), null, LineIcon.SETTINGS, null, gridX(col), bottomY(col++, bottomTop), w, h);
+        addTile(root, ADD, Strings.t("Add app"), null, LineIcon.PLUS, null, gridX(col), bottomY(col, bottomTop), w, h);
+        iconTop = bottomY(col, bottomTop) + h + px(40);
+        root.setMinimumHeight(iconTop + px(ICON_BUTTON) + px(MARGIN));
 
         // Plain icons at the top right, level with the date: any settings shortcuts picked, then the
         // network icon. Added last, so the first app keeps first focus; Up from the apps reaches them.
@@ -530,7 +669,8 @@ public class MainActivity extends Activity {
         card.setTag(key);
 
         // Banner tiles show their name underneath when focused.
-        final TextView caption = banner == null ? null : text(px(24), Color.WHITE, regular);
+        // rathi-tv: no names under tiles (owner's choice); the yellow ring shows focus.
+        final TextView caption = null;
         if (caption != null) {
             caption.setText(label);
             caption.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -544,7 +684,9 @@ public class MainActivity extends Activity {
             if (glass) bg.setColor(has ? 0x38FFFFFF : 0x13FFFFFF);
             // rathi-tv: the shelf follows focus; a tile leans in from the side focus came
             // from and settles, and the shine sweeps across it once.
+            card.setForeground(has ? focusRing() : null);
             if (has) {
+                showAll(!isHomeRow(key), v);
                 if (hasArt) shelf.show(key); else shelf.clear();
                 int k = Tilt.keyFor(lastKey, android.os.SystemClock.uptimeMillis() - lastKeyAt);
                 v.setRotationY(Tilt.yFor(k));
@@ -609,6 +751,7 @@ public class MainActivity extends Activity {
         }
         parent.addView(wrap, at(x, y, w, -2));
         tiles.add(card);
+        if (!isHomeRow(key)) belowHome(wrap);
     }
 
     // An icon on its own, no tile or label: a glass circle shows behind it only while it's focused.
@@ -627,7 +770,8 @@ public class MainActivity extends Activity {
         card.setContentDescription(label);
         card.setOnFocusChangeListener((v, has) -> {
             if (has) focusedKey = key;
-            if (has) shelf.clear(); // rathi-tv: the clock-row icons show the wallpaper, like glass tiles
+            if (has) shelf.clear(); // rathi-tv: the shortcut icons show the wallpaper, like glass tiles
+            if (has) showAll(true, v);
             bg.setColor(has ? 0x38FFFFFF : Color.TRANSPARENT);
             v.animate().scaleX(has ? 1.1f : 1f).scaleY(has ? 1.1f : 1f).setDuration(140).withLayer().start();
         });
@@ -635,8 +779,9 @@ public class MainActivity extends Activity {
         FrameLayout wrap = new FrameLayout(this);
         wrap.setClipChildren(false);
         wrap.addView(card, new FrameLayout.LayoutParams(b, b));
-        root.addView(wrap, at(x, px(ICON_TOP), b, b));
+        root.addView(wrap, at(x, iconTop, b, b)); // rathi-tv: below the inputs, not by the clock
         tiles.add(card);
+        belowHome(wrap);
         return iv;
     }
 
