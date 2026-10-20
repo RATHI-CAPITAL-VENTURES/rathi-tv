@@ -1,0 +1,7 @@
+
+# Agent scratch state — never a deliverable.
+.omc/
+
+# Secrets — any .env variant; examples are placeholders and tracked.
+.env*
+!.env*.example
