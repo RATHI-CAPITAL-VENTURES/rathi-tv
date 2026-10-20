@@ -4,9 +4,10 @@
 
 ```
 Home (com.rathi.tv.home)
-├─ MainActivity   upstream tv-detox launcher, renamed: app tiles, inputs, clock, shortcuts
-│   ├─ Shelf      the focused app's blurred art + colour behind the page (Ambient picks the colour)
-│   └─ tiles      lean in from the direction of travel (Tilt) and a shine sweeps across
+├─ MainActivity   upstream tv-detox launcher, renamed and re-laid-out (v0.4.0, below)
+│   ├─ Gallery    the car (assets/home) filling the first screen + its museum card
+│   ├─ Shelf      the focused app's blurred art + colour, behind the all-apps page
+│   └─ tiles      yellow focus ring, lean in from the direction of travel (Tilt), shine
 └─ CarsDream      DreamService: assets/cars/*.jpg, CarDeck order, crossfade + push-in
 ```
 
@@ -21,6 +22,62 @@ as designed. A second run with `YES_SETUP=1` didn't need the setup app turned of
 Home went straight to the new launcher. Only `launcherx` is disabled
 (`/data/local/tmp/tvhome-disabled.txt`). The cause of the difference wasn't found;
 `undo.sh` covers both.
+
+## The gallery home (v0.4.0)
+
+Chosen by the owner from a set of mockups (an Artifact, 2026-10-20): the "museum
+card" direction with big tiles, no names under them, and every app one press down.
+
+- **Two positions, one page.** The first screen is a car from the collection with
+  the clock, "Good evening, Ishan", the date, a cream museum card ("No. 9 of 83 ·
+  Bugatti Type 57 Imaginaire · 1934"), and the home row: the first five apps.
+  Pressing Down scrolls the page so the first app row sits 138 px from the top. The car
+  dims to near black (`Gallery.setDimmed`), and everything else fades in: the other
+  app rows, the inputs (wrapping like the apps, so all four HDMI inputs show), and the
+  shortcut icons. `ScrollView`'s own focus scrolling is switched off
+  (`computeScrollDeltaToGetChildRectOnScreen` returns 0) because it fought the two
+  positions. `showAll()` picks them, and scrolls further only for a tile below the fold.
+- **Below the home row is invisible at rest** (alpha 0), not just off screen: with
+  five tiles a row and the home row 114 px above the bottom edge, the second row
+  peeked over the car.
+- **Home always lands on the car** with the first app focused (`onNewIntent` with
+  `CATEGORY_HOME`). Back from an app keeps focus where it was.
+- **The cars are the caption-free renders** (`~/Pictures/Cars/work/*_big.png`,
+  6144×4096) cropped to 16:9 by `tools/make-home-cars.py`, which also writes
+  `assets/home/cars.tsv`: the name (title-cased from the catalogue's capitals, with
+  a keep-as-is list: DB5, NSX, McLaren, R/T …), the year, and the number in the
+  collection (oldest first). The screensaver keeps the captioned set in `assets/cars`.
+- **Speed:** a Down press scrolls (ScrollView's 250 ms smooth scroll) and, only when
+  the position changes, shows the rows at once and dims the car (200 ms). The first
+  build faded ~20 views on every press, even within the same position, and the owner
+  found it slow. Measured after the change: settled within 0.35 s.
+- **Memory:** the TV runs with ~250 MB free and swap full; Plex alone holds 330 MB.
+  `Gallery.trim()` drops the car pictures in `onStop`, so the home screen holds 35 MB,
+  not 50, while an app is open. A car is decoded again on return (~60 ms).
+- **The car changes slowly while idle:** every 3 minutes while Home is in front (owner's
+  choice over "every time Home opens"). It doesn't change while an app is open, and
+  the decode thread stops in `onPause`.
+- **Greeting:** `Greeting.forHour` gives "Good morning/afternoon/evening, Ishan". The
+  name was the owner's request.
+- **Pausing what plays behind Home.** The owner saw playback carry on behind this
+  launcher after Home. Plex, it turned out, keeps playing in the background; Google
+  TV's home stopped it.
+  - **Now:** `pauseVideoBehind()` sends a media **Pause** key
+    (`AudioManager.dispatchMediaKeyEvent`) when a film-type stream is playing
+    (`Playback`). That is the same as pressing Pause on the remote, and it goes to the
+    playing session. Music is exempt, so Spotify keeps playing.
+  - **Rejected, after shipping it to the TV:** taking audio focus (`AUDIOFOCUS_GAIN`,
+    handed straight back). It did stop Plex, but Plex treats a permanent focus loss
+    as "stop" and tears its player down. Going back left a spinner, and the film had
+    to be restarted (owner, 2026-10-20). Transient focus would make the app resume as
+    soon as it is handed back, behind Home.
+  - **What's verified:** YouTube pauses on Home with *or* without this, so YouTube
+    doesn't need it.
+  - **What isn't:** which app needs it is not yet confirmed.
+  - **A testing trap:** starting YouTube with `am start … VIEW <watch url>` opens
+    the player with its buffer stuck at 0. It reports `state=3` (playing) forever and
+    shows the title card under a spinner. A video picked by hand plays fine. Don't use
+    that intent to test playback.
 
 ## The top shelf (v0.3.0)
 

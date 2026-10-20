@@ -1,6 +1,6 @@
 TV ?= 192.168.68.65
 
-.PHONY: build test install undo cars guards changelog-archive
+.PHONY: build test install undo cars home-cars guards changelog-archive
 
 build:
 	sh build.sh
@@ -18,6 +18,10 @@ undo:
 # Re-make assets/cars from ~/Pictures/Cars (the result is committed).
 cars:
 	sh tools/make-cars.sh
+
+# Re-make assets/home (caption-free cars cropped to 16:9, plus cars.tsv; committed).
+home-cars:
+	python3 tools/make-home-cars.py
 
 guards:
 	bash .github/scripts/guards.sh all
