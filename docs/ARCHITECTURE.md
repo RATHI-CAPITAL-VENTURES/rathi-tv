@@ -38,7 +38,10 @@ screen up to the clock, and there's no room for a banner above it.
   screen with bilinear filtering. That's a heavy blur for free, on any API level.
   - At 24×14, NETFLIX was still readable as blocky letters.
   - One jump straight to 10×6 samples only ~60 points and can miss a thin logo
-    (review), hence the steps.
+    (review), hence the steps. From 64×36 down every step averages its whole area;
+    the first draw to 64×36 still samples, at ~2,300 points.
+  - A banner with no `ConstantState` (nothing safe to copy) gets no entry, so its
+    focus clears the shelf rather than fading in an empty, darkening layer.
   - Alpha 0.45: at 0.55 a white banner washed the screen pale.
   - The colour is taken from the 64×36 sample.
   - Focus passes only the app's key. Holding the banner in each tile's listener would
@@ -58,7 +61,12 @@ screen up to the clock, and there's no room for a banner above it.
   wallpaper.
 - **Lifecycle:** `forget()` (on rebuild) and `release()` (in `onDestroy`) also drop a
   queued change, so a stale banner can't be cached after a rebuild and nothing posted
-  outlives the activity.
+  outlives the activity. `forget()` also fades the shelf out. `apply(null)` used to
+  return early when `showingKey` was already null, so after a rebuild the
+  uninstalled app's art could stay on screen (re-review).
+- **Browsing speed:** at ~3 presses a second, the incoming layer can still be fading
+  out from two moves back. It's snapped to 0 before its picture is swapped. Fades use
+  `withLayer()`, so the full-screen layer is drawn once, not every frame.
 - **Tiles:** a tile taking focus starts 7° rotated toward the side focus came from
   (from the last D-pad key in `dispatchKeyEvent`) and settles flat over 300 ms while
   it scales up. Only a key under 250 ms old counts (`Tilt.keyFor`), so focus restored

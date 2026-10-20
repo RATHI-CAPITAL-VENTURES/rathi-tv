@@ -23,9 +23,10 @@ import java.util.Map;
  * fades with the picture. One shared tint view swapped its colour in a single frame.
  *
  * The blur is a downscale, not a blur filter: the banner is drawn at 64x36, halved in
- * filtered steps down to 10x6, and stretched back up with bilinear filtering. Stepping
- * down averages every part of the banner; one jump to 10x6 sampled ~60 points and
- * could miss a thin logo. Works on any Android version (RenderEffect needs 12+).
+ * filtered steps down to 10x6, and stretched back up with bilinear filtering. From
+ * 64x36 down every step averages its whole area; the first draw down to 64x36 still
+ * samples (~2,300 points, where one jump to 10x6 took ~60 and could miss a thin
+ * logo). Works on any Android version (RenderEffect needs 12+).
  *
  * The work happens once per app, in prepare(), when the tiles are built. Focus only
  * passes a key, so the tile listeners don't keep full-size banners alive.
@@ -83,6 +84,7 @@ final class Shelf {
   void prepare(String key, Drawable banner) {
     if (banner == null || blurred.containsKey(key)) return;
     Bitmap sample = draw(banner, SAMPLE_W, SAMPLE_H);
+    if (sample == null) return;   // no safe copy to draw: no entry, so focus clears instead
     colours.put(key, colourOf(sample));
     Bitmap b = sample;
     while (b.getWidth() / 2 >= SMALL_W) {
@@ -113,7 +115,9 @@ final class Shelf {
     main.removeCallbacksAndMessages(null);
     blurred.clear();
     colours.clear();
-    showingKey = null;
+    // Fade out now: with showingKey gone, a later clear() can't tell anything is up,
+    // and an uninstalled app's art would stay behind the page (re-review).
+    apply(null);
   }
 
   /** The activity is going: nothing queued or animating may outlive it. */
@@ -123,7 +127,9 @@ final class Shelf {
   }
 
   private void apply(String key) {
-    if (key == null ? showingKey == null : key.equals(showingKey)) return;
+    // Only "same app again" is skipped. A clear always runs: fading what's already at
+    // 0 costs nothing, and skipping it on showingKey == null left art stuck on screen.
+    if (key != null && key.equals(showingKey)) return;
     Bitmap b = key == null ? null : blurred.get(key);
     if (b == null) {
       showingKey = null;
@@ -136,6 +142,11 @@ final class Shelf {
     FrameLayout out = layer[shown];
     shown = 1 - shown;
     FrameLayout in = layer[shown];
+    // At browsing speed the incoming layer can still be fading out from two moves ago
+    // (~0.3 alpha); swapping its picture there is a visible cut. Snap it to 0 first:
+    // it is always the dimmer layer, so this is the smallest cut available.
+    in.animate().cancel();
+    in.setAlpha(0f);
     art[shown].setImageBitmap(b);
     Integer c = colours.get(key);
     if (c != null) {
@@ -156,17 +167,19 @@ final class Shelf {
   }
 
   // view.animate() cancels that view's previous alpha animation itself, so a quick
-  // third move never leaves two animators fighting over one view.
+  // third move never leaves two animators fighting over one view. withLayer(): a layer
+  // (art + tint) faded without one is redrawn offscreen, full screen, every frame;
+  // nothing inside changes during a fade, so a hardware layer is drawn once.
   private static void fade(View v, float to) {
-    v.animate().alpha(to).setDuration(FADE_MS).start();
+    v.animate().alpha(to).setDuration(FADE_MS).withLayer().start();
   }
 
   private Bitmap draw(Drawable banner, int w, int h) {
     // A copy: setBounds on the tile's own drawable would resize the tile's picture.
     Drawable.ConstantState cs = banner.getConstantState();
-    Drawable d = cs != null ? cs.newDrawable(context.getResources()).mutate() : null;
+    if (cs == null) return null;   // no safe copy: no shelf beats a shrunken tile
+    Drawable d = cs.newDrawable(context.getResources()).mutate();
     Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-    if (d == null) return out;   // no safe copy: an empty shelf beats a shrunken tile
     Canvas c = new Canvas(out);
     d.setBounds(0, 0, w, h);
     d.draw(c);

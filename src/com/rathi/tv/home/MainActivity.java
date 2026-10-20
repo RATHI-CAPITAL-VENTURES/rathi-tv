@@ -325,7 +325,9 @@ public class MainActivity extends Activity {
     public boolean dispatchKeyEvent(KeyEvent e) {
         if (e.getAction() == KeyEvent.ACTION_DOWN) {
             lastKey = e.getKeyCode();
-            lastKeyAt = e.getEventTime();
+            // Dispatch time, not press time: a key that waited behind a busy main thread
+            // still counts as fresh for the focus move it causes.
+            lastKeyAt = android.os.SystemClock.uptimeMillis();
         }
         return super.dispatchKeyEvent(e);
     }
