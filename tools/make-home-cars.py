@@ -73,6 +73,18 @@ def main():
     # Build beside the real folder and swap at the end, so a failure halfway never leaves
     # a cars.tsv naming pictures that were already deleted.
     tmp = pathlib.Path(tempfile.mkdtemp(dir=OUT.parent, prefix=".home-"))
+    try:
+        build(rows, tmp)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)   # no half-built folder left in assets/
+        raise
+    if OUT.exists():
+        shutil.rmtree(OUT)
+    tmp.rename(OUT)
+    print(f"{len(rows)} cars -> {OUT}")
+
+
+def build(rows, tmp):
     lines = []
     for n, r in enumerate(rows, 1):
         im = Image.open(CARS / "work" / f"{r['slug']}_big.png").convert("RGB")
@@ -89,10 +101,6 @@ def main():
             tmp / f"{r['slug']}.jpg", quality=82, optimize=True, progressive=False)
         lines.append(f"{r['slug']}.jpg\t{title_case(r['name'])}\t{r['year']}\t{n}")
     (tmp / "cars.tsv").write_text("\n".join(lines) + "\n")
-    if OUT.exists():
-        shutil.rmtree(OUT)
-    tmp.rename(OUT)
-    print(f"{len(lines)} cars -> {OUT}")
 
 
 if __name__ == "__main__":

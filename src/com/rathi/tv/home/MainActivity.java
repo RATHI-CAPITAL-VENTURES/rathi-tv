@@ -292,7 +292,10 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (saveConfig(intent)) buildTiles();
+        if (saveConfig(intent)) {
+            endMove();   // a rebuild would otherwise drop a move in progress unsaved
+            buildTiles();
+        }
         // rathi-tv: Home always lands on the car with the first app focused. (Back from an
         // app arrives through onResume only, and keeps focus where the app was opened.)
         if (intent != null && intent.hasCategory(Intent.CATEGORY_HOME) && !tiles.isEmpty()) {
@@ -405,7 +408,8 @@ public class MainActivity extends Activity {
             View wrap = (View) tile.getParent();
             int top = ((FrameLayout.LayoutParams) wrap.getLayoutParams()).topMargin;
             // The tile's laid-out height is 0 right after a rebuild; use the known size.
-            int height = tile.getHeight() > 0 ? tile.getHeight() : tileH;
+            int lpHeight = wrap.getLayoutParams().height;   // icons have a fixed one
+            int height = tile.getHeight() > 0 ? tile.getHeight() : lpHeight > 0 ? lpHeight : tileH;
             y = Math.max(y, top + height + px(56) - screenH);
         }
         if (scroller.getScrollY() != y) scroller.smoothScrollTo(0, y);
