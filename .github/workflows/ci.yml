@@ -1,5 +1,6 @@
 name: ci
 
+# Project-owned (started from the template's ci.yml.example).
 # AN EXAMPLE, NOT A TEMPLATE-OWNED FILE. `bootstrap` installs it as
 # .github/workflows/ci.yml.example — INERT, since GitHub runs only .yml/.yaml —
 # when the project has no other workflow, and never touches it again: from then
@@ -98,10 +99,7 @@ jobs:
       # and a laptop cannot drift. Override only what genuinely differs on a
       # runner (a destination, a toolchain path).
       - name: test
-        run: |
-          set -euo pipefail
-          echo "REPLACE: e.g. make test" >&2
-          exit 1
+        run: make test
 
   # A second, expensive job gated on its own scope key — the rathi-fitness
   # shape, where this is a macos-15 runner. Delete it if you have one stack.
@@ -114,8 +112,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Throwaway key: CI proves it builds; the TV gets builds signed on the Mac.
       - name: build
+        env:
+          KEYSTORE: ${{ runner.temp }}/ci.jks
         run: |
           set -euo pipefail
-          echo "REPLACE: e.g. make build" >&2
-          exit 1
+          export JAVA_HOME="$JAVA_HOME_17_X64" PATH="$JAVA_HOME_17_X64/bin:$PATH"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" >/dev/null
+          make build

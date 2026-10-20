@@ -1,0 +1,15 @@
+com.netflix.ninja
+com.google.android.youtube.tv
+com.amazon.amazonvideo.livingroom
+com.disney.disneyplus
+com.hulu.livingroomplus
+com.wbd.stream
+com.cbs.ott
+com.peacocktv.peacockandroid
+com.apple.atve.sony.appletv
+com.plexapp.android
+com.spotify.tv.android
+com.espn.score_center
+com.gotv.nflgamecenter.us.lite
+com.sling
+com.crunchyroll.crunchyroid
