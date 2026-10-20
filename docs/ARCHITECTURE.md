@@ -33,10 +33,16 @@ the shelf had to work for every app or not at all (owner, 2026-10-20).
 So the shelf is the tvOS 26 backdrop instead: with 15 apps the grid already fills the
 screen up to the clock, and there's no room for a banner above it.
 
-- **Art:** the focused app's banner is drawn at **10×6** and stretched back to full
-  screen with bilinear filtering. That's a heavy blur for free, and it works on any API
-  level. At 24×14, NETFLIX was still readable as blocky letters. At alpha 0.45; 0.55
-  let a white banner wash the screen pale.
+- **Art:** each app's banner is drawn once, when tiles are built (`Shelf.prepare`),
+  at 64×36, halved in filtered steps down to **10×6**, and stretched back to full
+  screen with bilinear filtering. That's a heavy blur for free, on any API level.
+  - At 24×14, NETFLIX was still readable as blocky letters.
+  - One jump straight to 10×6 samples only ~60 points and can miss a thin logo
+    (review), hence the steps.
+  - Alpha 0.45: at 0.55 a white banner washed the screen pale.
+  - The colour is taken from the 64×36 sample.
+  - Focus passes only the app's key. Holding the banner in each tile's listener would
+    keep full-size bitmaps alive that upstream's `fit()` exists to drop.
 - **Colour:** `Ambient.colourOf` weights each pixel by saturation² × brightness, so a
   small red logo on a white field gives red, not the grey a plain average gives.
   Too little colour gives back null, and no tint. It's drawn as a radial glow from the
@@ -44,15 +50,34 @@ screen up to the clock, and there's no room for a banner above it.
 - **Scrim:** a top-to-bottom dark gradient keeps the white clock and labels readable
   over any art.
 - **Timing:** changes wait 140 ms for focus to stop moving, then crossfade over
-  450 ms, so holding Right across a row doesn't strobe. Glass tiles (inputs,
-  Settings, Add) clear it back to the wallpaper.
+  450 ms, so holding Right across a row doesn't strobe. Two layers, each the art plus
+  its own tint, crossfade as a pair. With one shared tint view, the colour cut from
+  red to blue in a single frame while the art faded (review).
+  `view.animate()` cancels a view's previous fade, so a quick third move never leaves
+  two animators on one view. Glass tiles and the clock-row icons clear it back to the
+  wallpaper.
+- **Lifecycle:** `forget()` (on rebuild) and `release()` (in `onDestroy`) also drop a
+  queued change, so a stale banner can't be cached after a rebuild and nothing posted
+  outlives the activity.
 - **Tiles:** a tile taking focus starts 7° rotated toward the side focus came from
   (from the last D-pad key in `dispatchKeyEvent`) and settles flat over 300 ms while
-  it scales up. A light streak sweeps across it once. Pointer-driven parallax like
+  it scales up. Only a key under 250 ms old counts (`Tilt.keyFor`), so focus restored
+  by a rebuild minutes later doesn't lean. Focus-gain runs without `withLayer()`,
+  because the shine moves inside the card and a layer would be redrawn every frame.
+  **Not verified by screenshot:** whether the lean goes the right way on screen. A
+  capture over adb lands after the 300 ms animation even at 10× animator scale; it
+  needs an eye on the TV. A light streak sweeps across it once. Pointer-driven parallax like
   Apple's touch surface has no equivalent on a D-pad remote.
 
-Checked by screenshot on the TV: Netflix (red), Disney+ (teal), Hulu (green), Apple
-TV (dark, as its tile is).
+Checked by screenshot on the TV for all 15 apps:
+- red: Netflix, YouTube, ESPN;
+- blue: Prime Video, Paramount+, NFL;
+- teal: Disney+;
+- green: Hulu, Spotify;
+- orange: Crunchyroll;
+- dark, as their tiles are: Max, Peacock, Apple TV, Plex, Sling.
+
+None came out grey, and the HDMI row clears it.
 
 ## The screensaver
 

@@ -8,9 +8,16 @@ package com.rathi.tv.home;
  */
 final class Tilt {
   static final float DEG = 7f;
+  /** Focus that moves this long after the last key (a rebuild restoring focus) doesn't lean. */
+  static final long FRESH_MS = 250;
   static final int UP = 19, DOWN = 20, LEFT = 21, RIGHT = 22;
 
   private Tilt() {}
+
+  /** The key that moved focus, or 0 if the last key press is too old to have done it. */
+  static int keyFor(int lastKey, long ageMs) {
+    return ageMs >= 0 && ageMs <= FRESH_MS ? lastKey : 0;
+  }
 
   static float yFor(int key) {
     if (key == RIGHT) return -DEG;

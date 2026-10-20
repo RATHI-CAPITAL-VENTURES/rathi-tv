@@ -35,7 +35,9 @@ public class AmbientTest {
     check("greys only -> null", Ambient.colourOf(field(0xFF333333, 0xFFAAAAAA, 50, 140)) == null);
     check("a few colourful pixels below the floor -> null",
         Ambient.colourOf(field(white, netflixRed, 1, 140)) == null);
-    check("transparent pixels are ignored", reddish(Ambient.colourOf(field(0x00FFFFFF, netflixRed, 10, 140))));
+    // A COLOURFUL transparent field: transparent white weighs nothing anyway, so it
+    // couldn't tell whether transparency is skipped at all.
+    check("transparent pixels are ignored, even colourful ones", reddish(Ambient.colourOf(field(0x000000FF, netflixRed, 10, 140))));
     check("fully transparent -> null", Ambient.colourOf(field(0x00000000, 0x00FF0000, 50, 140)) == null);
     check("empty -> null", Ambient.colourOf(new int[0]) == null);
     check("result is opaque", (Ambient.colourOf(field(black, netflixRed, 50, 140)) >>> 24) == 0xFF);
@@ -52,6 +54,10 @@ public class AmbientTest {
     check("Down: rotationX positive", Tilt.xFor(Tilt.DOWN) > 0 && Tilt.yFor(Tilt.DOWN) == 0);
     check("Up: rotationX negative", Tilt.xFor(Tilt.UP) < 0);
     check("OK or first focus: flat", Tilt.yFor(23) == 0 && Tilt.xFor(23) == 0 && Tilt.yFor(0) == 0);
+    check("a fresh key counts", Tilt.keyFor(Tilt.RIGHT, 40) == Tilt.RIGHT);
+    check("boundary: exactly FRESH_MS still counts", Tilt.keyFor(Tilt.RIGHT, Tilt.FRESH_MS) == Tilt.RIGHT);
+    check("a key from minutes ago (focus restored by a rebuild) doesn't lean", Tilt.keyFor(Tilt.RIGHT, 180_000) == 0);
+    check("1 ms past FRESH_MS doesn't", Tilt.keyFor(Tilt.RIGHT, Tilt.FRESH_MS + 1) == 0);
 
     if (failed > 0) { System.out.println(failed + " failed"); System.exit(1); }
     System.out.println("all passed");

@@ -1,6 +1,5 @@
 package com.rathi.tv.home;
 
-import android.animation.ObjectAnimator;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -20,12 +19,19 @@ import java.util.Map;
  * blurred to a wash of colour, fills the screen behind the clock and tiles, tinted
  * with the app's own colour, and crossfades as focus moves.
  *
- * The blur is a downscale, not a blur filter: the banner is shrunk to 10x6 and
- * drawn back up with bilinear filtering. That reads as a heavy blur, costs nothing per
- * frame, and works on any Android version (RenderEffect needs 12+ and a GPU pass).
+ * Two layers, each the art plus its own tint, crossfade as a pair, so the colour
+ * fades with the picture. One shared tint view swapped its colour in a single frame.
  *
- * Sits between the window's wallpaper and the page. A glass tile (inputs, Settings)
- * clears it, so the wallpaper shows again.
+ * The blur is a downscale, not a blur filter: the banner is drawn at 64x36, halved in
+ * filtered steps down to 10x6, and stretched back up with bilinear filtering. Stepping
+ * down averages every part of the banner; one jump to 10x6 sampled ~60 points and
+ * could miss a thin logo. Works on any Android version (RenderEffect needs 12+).
+ *
+ * The work happens once per app, in prepare(), when the tiles are built. Focus only
+ * passes a key, so the tile listeners don't keep full-size banners alive.
+ *
+ * Sits between the window's wallpaper and the page. Glass tiles and the clock-row
+ * icons clear it, so the wallpaper shows again.
  */
 final class Shelf {
   static final long SETTLE_MS = 140;   // wait for focus to stop moving before changing
@@ -34,31 +40,34 @@ final class Shelf {
   static final float ART_ALPHA = 0.45f;
   // 24x14 still showed blocky letters (NETFLIX was readable); 10x6 is a wash of colour.
   static final int SMALL_W = 10, SMALL_H = 6;
+  static final int SAMPLE_W = 64, SAMPLE_H = 36;
 
   private final Context context;
   private final FrameLayout view;
+  private final FrameLayout[] layer = new FrameLayout[2];
   private final ImageView[] art = new ImageView[2];
-  private final View tint;
-  private final View scrim;
+  private final View[] tint = new View[2];
   private final Handler main = new Handler(Looper.getMainLooper());
   private final Map<String, Bitmap> blurred = new HashMap<>();
   private final Map<String, Integer> colours = new HashMap<>();
-  private int shown;            // index into art of the one on screen
+  private final View scrim;
+  private int shown;            // index of the layer on screen
   private String showingKey;
-  private String pendingKey;
 
   Shelf(Context context) {
     this.context = context;
     view = new FrameLayout(context);
     for (int i = 0; i < 2; i++) {
+      layer[i] = new FrameLayout(context);
+      layer[i].setAlpha(0f);
       art[i] = new ImageView(context);
       art[i].setScaleType(ImageView.ScaleType.FIT_XY);
-      art[i].setAlpha(0f);
-      view.addView(art[i], new FrameLayout.LayoutParams(-1, -1));
+      art[i].setAlpha(ART_ALPHA);
+      layer[i].addView(art[i], new FrameLayout.LayoutParams(-1, -1));
+      tint[i] = new View(context);
+      layer[i].addView(tint[i], new FrameLayout.LayoutParams(-1, -1));
+      view.addView(layer[i], new FrameLayout.LayoutParams(-1, -1));
     }
-    tint = new View(context);
-    tint.setAlpha(0f);
-    view.addView(tint, new FrameLayout.LayoutParams(-1, -1));
     // Keeps the white clock and labels readable over any banner: darker at the top
     // (the clock) and the bottom (the inputs row), lighter through the middle.
     scrim = new View(context);
@@ -70,44 +79,64 @@ final class Shelf {
 
   View view() { return view; }
 
-  /** The app with this key and banner now has focus. */
-  void show(final String key, final Drawable banner) {
-    pendingKey = key;
+  /** Work out an app's blurred art and colour, once, while its tile is built. */
+  void prepare(String key, Drawable banner) {
+    if (banner == null || blurred.containsKey(key)) return;
+    Bitmap sample = draw(banner, SAMPLE_W, SAMPLE_H);
+    colours.put(key, colourOf(sample));
+    Bitmap b = sample;
+    while (b.getWidth() / 2 >= SMALL_W) {
+      Bitmap half = Bitmap.createScaledBitmap(b, b.getWidth() / 2, b.getHeight() / 2, true);
+      if (b != sample) b.recycle();
+      b = half;
+    }
+    Bitmap small = Bitmap.createScaledBitmap(b, SMALL_W, SMALL_H, true);
+    if (b != sample && b != small) b.recycle();
+    if (sample != small) sample.recycle();
+    blurred.put(key, small);
+  }
+
+  /** The app with this key has focus. */
+  void show(final String key) {
     main.removeCallbacksAndMessages(null);
-    main.postDelayed(() -> apply(key, banner), SETTLE_MS);
+    main.postDelayed(() -> apply(key), SETTLE_MS);
   }
 
   /** Something without a banner has focus: back to the wallpaper. */
   void clear() {
-    pendingKey = null;
     main.removeCallbacksAndMessages(null);
-    main.postDelayed(() -> apply(null, null), SETTLE_MS);
+    main.postDelayed(() -> apply(null), SETTLE_MS);
   }
 
-  private void apply(String key, Drawable banner) {
+  /** The tiles are being rebuilt: drop everything, including a change still queued. */
+  void forget() {
+    main.removeCallbacksAndMessages(null);
+    blurred.clear();
+    colours.clear();
+    showingKey = null;
+  }
+
+  /** The activity is going: nothing queued or animating may outlive it. */
+  void release() {
+    main.removeCallbacksAndMessages(null);
+    for (View v : new View[] {layer[0], layer[1], scrim}) v.animate().cancel();
+  }
+
+  private void apply(String key) {
     if (key == null ? showingKey == null : key.equals(showingKey)) return;
-    showingKey = key;
-    ImageView out = art[shown];
-    if (key == null || banner == null) {
-      fade(out, 0f);
-      fade(tint, 0f);
+    Bitmap b = key == null ? null : blurred.get(key);
+    if (b == null) {
+      showingKey = null;
+      fade(layer[0], 0f);
+      fade(layer[1], 0f);
       fade(scrim, 0f);
       return;
     }
-    Bitmap b = blurred.get(key);
-    if (b == null) {
-      b = shrink(banner);
-      blurred.put(key, b);
-      colours.put(key, colourOf(b));
-    }
+    showingKey = key;
+    FrameLayout out = layer[shown];
     shown = 1 - shown;
-    ImageView in = art[shown];
-    in.setImageBitmap(b);
-    in.bringToFront();
-    tint.bringToFront();
-    scrim.bringToFront();
-    fade(in, ART_ALPHA);
-    fade(out, 0f);
+    FrameLayout in = layer[shown];
+    art[shown].setImageBitmap(b);
     Integer c = colours.get(key);
     if (c != null) {
       GradientDrawable g = new GradientDrawable();
@@ -115,42 +144,38 @@ final class Shelf {
       g.setGradientCenter(0.85f, 0.15f);
       g.setGradientRadius(context.getResources().getDisplayMetrics().widthPixels * 0.9f);
       g.setColors(new int[] {Ambient.toned(c, 200) & 0x80FFFFFF, 0x00000000});
-      tint.setBackground(g);
-      fade(tint, 1f);
+      tint[shown].setBackground(g);
     } else {
-      fade(tint, 0f);
+      tint[shown].setBackground(null);
     }
+    in.bringToFront();
+    scrim.bringToFront();
+    fade(in, 1f);
+    fade(out, 0f);
     fade(scrim, 1f);
   }
 
+  // view.animate() cancels that view's previous alpha animation itself, so a quick
+  // third move never leaves two animators fighting over one view.
   private static void fade(View v, float to) {
-    ObjectAnimator a = ObjectAnimator.ofFloat(v, View.ALPHA, v.getAlpha(), to);
-    a.setDuration(FADE_MS);
-    a.start();
+    v.animate().alpha(to).setDuration(FADE_MS).start();
   }
 
-  /** Draw the banner at 10x6: drawn back up with filtering, that is the blur. */
-  private Bitmap shrink(Drawable banner) {
+  private Bitmap draw(Drawable banner, int w, int h) {
     // A copy: setBounds on the tile's own drawable would resize the tile's picture.
     Drawable.ConstantState cs = banner.getConstantState();
-    Drawable d = cs != null ? cs.newDrawable(context.getResources()).mutate() : banner;
-    Bitmap small = Bitmap.createBitmap(SMALL_W, SMALL_H, Bitmap.Config.ARGB_8888);
-    Canvas c = new Canvas(small);
-    d.setBounds(0, 0, SMALL_W, SMALL_H);
+    Drawable d = cs != null ? cs.newDrawable(context.getResources()).mutate() : null;
+    Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+    if (d == null) return out;   // no safe copy: an empty shelf beats a shrunken tile
+    Canvas c = new Canvas(out);
+    d.setBounds(0, 0, w, h);
     d.draw(c);
-    return small;
+    return out;
   }
 
   private static Integer colourOf(Bitmap b) {
     int[] px = new int[b.getWidth() * b.getHeight()];
     b.getPixels(px, 0, b.getWidth(), 0, 0, b.getWidth(), b.getHeight());
     return Ambient.colourOf(px);
-  }
-
-  /** Bitmaps are tiny (10x6), so caching every app costs nothing. */
-  void forget() {
-    blurred.clear();
-    colours.clear();
-    showingKey = null;
   }
 }
