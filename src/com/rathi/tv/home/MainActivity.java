@@ -408,8 +408,11 @@ public class MainActivity extends Activity {
         return bottomTop + (col / PER_ROW) * px(ROW_STEP);
     }
 
-    // rathi-tv: see Playback. Asking for focus is what makes a film behind Home pause;
-    // it is handed straight back, so nothing of ours holds the audio.
+    // rathi-tv: see Playback. A Pause key, exactly as from the remote, goes to the media
+    // session that is playing. The first version took audio focus instead (AUDIOFOCUS_GAIN,
+    // handed straight back): Plex read that as a permanent loss and tore its player down,
+    // so going back to it left a spinner and the film had to be restarted (owner,
+    // 2026-10-20). A Pause leaves the player paused where it was.
     private void pauseVideoBehind() {
         android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
         if (am == null || android.os.Build.VERSION.SDK_INT < 26) return;
@@ -417,14 +420,9 @@ public class MainActivity extends Activity {
         for (android.media.AudioPlaybackConfiguration c : am.getActivePlaybackConfigurations())
             types.add(c.getAudioAttributes().getContentType());
         if (!Playback.shouldPause(types)) return;
-        android.media.AudioFocusRequest r = new android.media.AudioFocusRequest.Builder(
-                android.media.AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(new android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE).build())
-                .build();
-        am.requestAudioFocus(r);
-        am.abandonAudioFocusRequest(r);
+        long now = android.os.SystemClock.uptimeMillis();
+        am.dispatchMediaKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE, 0));
+        am.dispatchMediaKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PAUSE, 0));
     }
 
     private boolean isHomeRow(String key) {

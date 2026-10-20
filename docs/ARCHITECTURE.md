@@ -52,11 +52,18 @@ card" direction with big tiles, no names under them, and every app one press dow
   the decode thread stops in `onPause`.
 - **Greeting:** `Greeting.forHour` gives "Good morning/afternoon/evening, Ishan". The
   name was the owner's request.
-- **Pausing what plays behind Home.** Google TV's home took audio focus when it
-  opened, and that focus loss is what pauses some players. This launcher didn't, and
-  the owner saw playback carry on after Home. `pauseVideoBehind()` now takes and
-  immediately returns focus when a film-type stream is playing (`Playback`). Music
-  is exempt, so Spotify keeps playing.
+- **Pausing what plays behind Home.** The owner saw playback carry on behind this
+  launcher after Home. Plex, it turned out, keeps playing in the background; Google
+  TV's home stopped it.
+  - **Now:** `pauseVideoBehind()` sends a media **Pause** key
+    (`AudioManager.dispatchMediaKeyEvent`) when a film-type stream is playing
+    (`Playback`). That is the same as pressing Pause on the remote, and it goes to the
+    playing session. Music is exempt, so Spotify keeps playing.
+  - **Rejected, after shipping it to the TV:** taking audio focus (`AUDIOFOCUS_GAIN`,
+    handed straight back). It did stop Plex, but Plex treats a permanent focus loss
+    as "stop" and tears its player down. Going back left a spinner, and the film had
+    to be restarted (owner, 2026-10-20). Transient focus would make the app resume as
+    soon as it is handed back, behind Home.
   - **What's verified:** YouTube pauses on Home with *or* without this, so YouTube
     doesn't need it.
   - **What isn't:** which app needs it is not yet confirmed.
